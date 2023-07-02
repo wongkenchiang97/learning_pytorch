@@ -2,7 +2,10 @@ cmake_minimum_required(VERSION 3.0.2)
 project(pytorch_tutorial)
 
 ## Compile as C++11, supported in ROS Kinetic and newer
-# add_compile_options(-std=c++11)
+add_compile_options(-std=c++14)
+set(CMAKE_CXX_FLAGS ${CMAKE_CXX_FLAGS} ${TORCH_CXX_FLAGS})
+set(-D DOWNLOAD_DATASETS "ON")
+list(APPEND CMAKE_PREFIX_PATH "~/libtorch")
 
 ## Find catkin macros and libraries
 ## if COMPONENTS list like find_package(catkin REQUIRED COMPONENTS xyz)
@@ -14,6 +17,9 @@ find_package(catkin REQUIRED COMPONENTS
 )
 
 find_package(Torch REQUIRED)
+find_package(TorchVision REQUIRED)
+find_package(OpenCV REQUIRED)
+find_package(Eigen3 3.3 REQUIRED )
 
 ## System dependencies are found with CMake's conventions
 # find_package(Boost REQUIRED COMPONENTS system)
@@ -105,7 +111,7 @@ find_package(Torch REQUIRED)
 ## CATKIN_DEPENDS: catkin_packages dependent projects also need
 ## DEPENDS: system dependencies of this project that dependent projects also need
 catkin_package(
-#  INCLUDE_DIRS include
+  INCLUDE_DIRS include
 #  LIBRARIES pytorch_tutorial
 #  CATKIN_DEPENDS roscpp rospy std_msgs
 #  DEPENDS system_lib
@@ -118,8 +124,12 @@ catkin_package(
 ## Specify additional locations of header files
 ## Your package locations should be listed before other locations
 include_directories(
-# include
+  include
   ${catkin_INCLUDE_DIRS}
+  ${TORCH_INCLUDE_DIRS}
+  ${TorchVision_INCLUDE_DIRS}
+  ${EIGEN3_INCLUDE_DIRS}
+  ${OpenCV_INCLUDE_DIRS}
 )
 
 ## Declare a C++ library
@@ -135,7 +145,10 @@ include_directories(
 ## Declare a C++ executable
 ## With catkin_make all packages are built within a single CMake context
 ## The recommended prefix ensures that target names across packages don't collide
-# add_executable(${PROJECT_NAME}_node src/pytorch_tutorial_node.cpp)
+add_executable(feed_forward_node src/feed_forward_node.cpp)
+add_executable(unet2d_node src/unet2d_node.cpp)
+add_executable(lane_detection_node src/lane_detection_node.cpp)
+add_executable(custom_dataset_node src/custom_dataset_node.cpp)
 
 ## Rename C++ executable without prefix
 ## The above recommended prefix causes long target names, the following renames the
@@ -148,9 +161,33 @@ include_directories(
 # add_dependencies(${PROJECT_NAME}_node ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
 
 ## Specify libraries to link a library or executable target against
-# target_link_libraries(${PROJECT_NAME}_node
-#   ${catkin_LIBRARIES}
-# )
+target_link_libraries(feed_forward_node
+  ${catkin_LIBRARIES}
+  ${TORCH_LIBRARIES}
+)
+set_property(TARGET feed_forward_node PROPERTY CXX_STANDARD 17)
+
+target_link_libraries(unet2d_node
+  ${catkin_LIBRARIES}
+  ${TORCH_LIBRARIES}
+)
+set_property(TARGET unet2d_node PROPERTY CXX_STANDARD 17)
+
+target_link_libraries(lane_detection_node
+  ${catkin_LIBRARIES}
+  ${OpenCV_LIBRARIES}
+  ${TORCH_LIBRARIES}
+)
+set_property(TARGET lane_detection_node PROPERTY CXX_STANDARD 17)
+
+target_link_libraries(custom_dataset_node
+  ${catkin_LIBRARIES}
+  ${OpenCV_LIBRARIES}
+  ${TORCH_LIBRARIES}
+  ${TorchVision_LIBRARIES}
+  stdc++fs
+)
+set_property(TARGET custom_dataset_node PROPERTY CXX_STANDARD 17)
 
 #############
 ## Install ##
@@ -181,6 +218,11 @@ include_directories(
 # )
 
 ## Mark cpp header files for installation
+install(DIRECTORY include/${PROJECT_NAME}/
+  DESTINATION ${CATKIN_PACKAGE_INCLUDE_DESTINATION}
+#   FILES_MATCHING PATTERN "*.h"
+#   PATTERN ".svn" EXCLUDE
+)
 # install(DIRECTORY include/${PROJECT_NAME}/
 #   DESTINATION ${CATKIN_PACKAGE_INCLUDE_DESTINATION}
 #   FILES_MATCHING PATTERN "*.h"
