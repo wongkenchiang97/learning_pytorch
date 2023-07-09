@@ -87,11 +87,12 @@ std::pair<torch::Tensor, torch::Tensor> read_data(const std::string &_root, bool
                 images[i] = img_tensor;
                 targets[i] = torch::tensor(label, torch::kInt64);
             }
-            if (i >= num_samples)
+            if (i >= num_samples - 1)
                 break;
             i++;
         }
         label++;
+        i = 0;
     }
     return {images, targets};
 }

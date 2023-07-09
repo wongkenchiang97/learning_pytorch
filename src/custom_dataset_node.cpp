@@ -25,7 +25,7 @@ int main(int argc, char **argv)
     {
         auto img = batch.data;
         auto target = batch.target;
-        auto out = tensorToCV(img);
+        auto out = tensorToCV(img[0]);
         cv::imshow("Display", out);
         int k = cv::waitKey(0);
         break;
@@ -37,12 +37,14 @@ int main(int argc, char **argv)
 cv::Mat tensorToCV(torch::Tensor _x)
 {
     _x = _x.permute({1, 2, 0});
-    _x = _x.mul(0.5).add(0.5).clamp(0, 255).to(torch::kByte);
+    _x = _x.mul(0.5).add(0.5).mul(255).clamp(0, 255).to(torch::kByte);
     _x = _x.contiguous();
 
     int height = _x.size(0);
     int width = _x.size(1);
     cv::Mat output(cv::Size(width, height), CV_8UC3);
     std::memcpy((void *)output.data, _x.data_ptr(), sizeof(torch::kU8) * _x.numel());
+    cv::cvtColor(output, output, cv::COLOR_BGR2RGB);
+
     return output.clone();
 }
