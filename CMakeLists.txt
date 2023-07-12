@@ -170,6 +170,9 @@ set_property(TARGET feed_forward_node PROPERTY CXX_STANDARD 17)
 target_link_libraries(unet2d_node
   ${catkin_LIBRARIES}
   ${TORCH_LIBRARIES}
+  ${OpenCV_LIBRARIES}
+  ${TorchVision_LIBRARIES}
+  stdc++fs
 )
 set_property(TARGET unet2d_node PROPERTY CXX_STANDARD 17)
 
