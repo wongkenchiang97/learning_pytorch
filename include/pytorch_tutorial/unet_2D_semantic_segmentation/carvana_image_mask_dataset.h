@@ -41,6 +41,8 @@ namespace carvana_dataset
         bool is_train() const noexcept;
         const torch::Tensor &images() const;
         const torch::Tensor &targets() const;
+        template <typename Loader>
+        void showLoaderData(Loader _loader);
         ~ImageMask();
 
     private:
@@ -198,6 +200,35 @@ namespace carvana_dataset
     const torch::Tensor &ImageMask::targets() const
     {
         return targets_;
+    }
+
+    template <typename Loader>
+    void ImageMask::showLoaderData(Loader _loader)
+    {
+        int64_t batch_idx = 0;
+        for (auto batch : *_loader)
+        {
+            std::cout << "batch[" << batch_idx << "]" << std::endl;
+            for (int i = 0; i < batch.data.sizes().at(0); i++)
+            {
+                auto tensor_img = batch.data[i];
+                auto tensor_mask = batch.target[i];
+
+                auto img = carvana_dataset::ImageMask::TensorToCVColor(tensor_img);
+                auto mask = carvana_dataset::ImageMask::TensorToCVMask(tensor_mask);
+
+                cv::Mat dst;
+                double alpha = 0.5;
+                double beta = 1 - alpha;
+                cv::cvtColor(mask, mask, cv::COLOR_GRAY2RGB);
+                cv::applyColorMap(mask, mask, cv::COLORMAP_TWILIGHT_SHIFTED);
+                cv::addWeighted(img, alpha, mask, beta, 0.0, dst);
+                cv::hconcat(dst, mask, dst);
+                imshow("loader data", dst);
+                cv::waitKey(3e3);
+            }
+            batch_idx++;
+        }
     }
 
 } // namespace carvana_dataset
