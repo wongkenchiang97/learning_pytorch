@@ -6,6 +6,7 @@ add_compile_options(-std=c++14)
 set(CMAKE_CXX_FLAGS ${CMAKE_CXX_FLAGS} ${TORCH_CXX_FLAGS})
 set(-D DOWNLOAD_DATASETS "ON")
 list(APPEND CMAKE_PREFIX_PATH "~/libtorch")
+set(CMAKE_CUDA_COMPILER "/usr/local/cuda-12.3/bin/nvcc")
 
 ## Find catkin macros and libraries
 ## if COMPONENTS list like find_package(catkin REQUIRED COMPONENTS xyz)
@@ -14,11 +15,12 @@ find_package(catkin REQUIRED COMPONENTS
   roscpp
   rospy
   std_msgs
+  roslib
 )
 
 find_package(Torch REQUIRED)
-find_package(TorchVision REQUIRED)
-find_package(OpenCV REQUIRED)
+# find_package(TorchVision REQUIRED)
+find_package(OpenCV 4 REQUIRED)
 find_package(Eigen3 3.3 REQUIRED )
 
 ## System dependencies are found with CMake's conventions
@@ -127,7 +129,7 @@ include_directories(
   include
   ${catkin_INCLUDE_DIRS}
   ${TORCH_INCLUDE_DIRS}
-  ${TorchVision_INCLUDE_DIRS}
+  # ${TorchVision_INCLUDE_DIRS}
   ${EIGEN3_INCLUDE_DIRS}
   ${OpenCV_INCLUDE_DIRS}
 )
@@ -149,6 +151,7 @@ add_executable(feed_forward_node src/feed_forward_node.cpp)
 add_executable(unet2d_node src/unet2d_node.cpp)
 add_executable(lane_detection_node src/lane_detection_node.cpp)
 add_executable(custom_dataset_node src/custom_dataset_node.cpp)
+add_executable(point_cloud_detection_node src/point_cloud_detection_node.cpp)
 
 ## Rename C++ executable without prefix
 ## The above recommended prefix causes long target names, the following renames the
@@ -171,7 +174,7 @@ target_link_libraries(unet2d_node
   ${catkin_LIBRARIES}
   ${TORCH_LIBRARIES}
   ${OpenCV_LIBRARIES}
-  ${TorchVision_LIBRARIES}
+  # ${TorchVision_LIBRARIES}
   stdc++fs
 )
 set_property(TARGET unet2d_node PROPERTY CXX_STANDARD 17)
@@ -191,6 +194,15 @@ target_link_libraries(custom_dataset_node
   stdc++fs
 )
 set_property(TARGET custom_dataset_node PROPERTY CXX_STANDARD 17)
+
+target_link_libraries(point_cloud_detection_node
+  ${catkin_LIBRARIES}
+  ${OpenCV_LIBRARIES}
+  ${TORCH_LIBRARIES}
+  ${TorchVision_LIBRARIES}
+  stdc++fs
+)
+set_property(TARGET point_cloud_detection_node PROPERTY CXX_STANDARD 17)
 
 #############
 ## Install ##

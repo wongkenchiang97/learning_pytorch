@@ -1,0 +1,5 @@
+<launch>
+
+    <node pkg="pytorch_tutorial" type="unet2d_node" name="unet2d_node" output="screen" />
+
+</launch>

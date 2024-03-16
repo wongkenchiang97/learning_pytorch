@@ -5,6 +5,8 @@
 #include <pytorch_tutorial/unet_2D_semantic_segmentation/double_conv.h>
 #include <Eigen/Eigen>
 
+using namespace torch::indexing;
+
 class Unet2DImpl
     : public torch::nn::Module
 {
@@ -69,15 +71,19 @@ Unet2DImpl::~Unet2DImpl()
 
 torch::Tensor Unet2DImpl::forward(torch::Tensor _x)
 {
+    if(!_x.requires_grad())
+        _x.requires_grad_(true);
     std::vector<torch::Tensor> encoded_features;
     encoded_features.reserve(encoder_->size());
 
     /*Encoder phase*/
+    int i = 0;
     for (auto seq : *encoder_)
     {
         _x = seq->as<DoubleConv>()->forward(_x);
-        encoded_features.push_back(_x);
-        max_pool_->operator()(_x);
+        encoded_features.push_back(_x.clone());
+        _x = max_pool_->operator()(_x);
+        i++;
     }
 
     /*Neck phase*/
@@ -88,11 +94,13 @@ torch::Tensor Unet2DImpl::forward(torch::Tensor _x)
     for (int i = 0; i < decoder_->size(); i += 2)
     {
         _x = decoder_->operator[](i)->as<torch::nn::ConvTranspose2d>()->forward(_x);
+        torch::Tensor cat_encoded_features;
         if (_x.sizes() != encoded_features_map.reverse()(std::floor(i / 2)).sizes())
         {
-            _x = torch::resize(_x, encoded_features_map.reverse()(std::floor(i / 2)).sizes());
+            cat_encoded_features = torch::cat({encoded_features_map.reverse()(std::floor(i / 2)).index({"...",Slice(None,_x.size(-2)),Slice(None,_x.size(-1))}), _x}, -3);
+        }else{
+            cat_encoded_features = torch::cat({encoded_features_map.reverse()(std::floor(i / 2)), _x}, -3);
         }
-        auto cat_encoded_features = torch::cat({encoded_features_map.reverse()(std::floor(i / 2)), _x}, 1);
         _x = decoder_->operator[](i + 1)->as<DoubleConv>()->forward(cat_encoded_features);
     }
 

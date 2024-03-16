@@ -11,10 +11,10 @@
 
 namespace fs = std::experimental::filesystem;
 
-constexpr int kTrainSize = 12;
-constexpr int kTestSize = 8;
-constexpr int kRows = 300;
-constexpr int kCols = 300;
+constexpr int kTrainSize = 3000;
+constexpr int kTestSize = 48;
+constexpr int kRows = 640;
+constexpr int kCols = 480;
 
 namespace carvana_dataset
 {
@@ -33,8 +33,8 @@ namespace carvana_dataset
         static cv::Mat readMask(const std::string &_path);
         static torch::Tensor CVColorToTensor(cv::Mat _img);
         static torch::Tensor CVMaskToTensor(cv::Mat _img);
-        static cv::Mat TensorToCVColor(torch::Tensor _img_tensor);
-        static cv::Mat TensorToCVMask(torch::Tensor _img_tensor);
+        static cv::Mat TensorToCVColor(torch::Tensor _img_tensor,float _mean,float _stdev);
+        static cv::Mat TensorToCVMask(torch::Tensor _img_tensor,float _mean,float _stdev);
 
         torch::data::Example<> get(size_t _index) override;
         torch::optional<size_t> size() const override;
@@ -81,28 +81,28 @@ namespace carvana_dataset
         return img_tensor;
     }
 
-    cv::Mat ImageMask::TensorToCVColor(torch::Tensor _img_tensor)
+    cv::Mat ImageMask::TensorToCVColor(torch::Tensor _img_tensor,float _mean,float _stdev)
     {
         _img_tensor = _img_tensor.permute({1, 2, 0});
-        _img_tensor = _img_tensor.mul(0.5).add(0.5).mul(255).clamp(0, 255).to(torch::kByte);
+        _img_tensor = _img_tensor.mul(_stdev).add(_mean).mul(255).clamp(0, 255).to(torch::kByte);
         _img_tensor = _img_tensor.contiguous();
 
-        int height = _img_tensor.size(0);
-        int width = _img_tensor.size(1);
+        int height = _img_tensor.size(1);
+        int width = _img_tensor.size(0);
         cv::Mat output(cv::Size(width, height), CV_8UC3);
         std::memcpy((void *)output.data, _img_tensor.data_ptr(), sizeof(torch::kU8) * _img_tensor.numel());
         cv::cvtColor(output, output, cv::COLOR_BGR2RGB);
 
         return output.clone();
     }
-    cv::Mat ImageMask::TensorToCVMask(torch::Tensor _img_tensor)
+    cv::Mat ImageMask::TensorToCVMask(torch::Tensor _img_tensor,float _mean,float _stdev)
     {
         _img_tensor = _img_tensor.permute({0, 1});
-        _img_tensor = _img_tensor.mul(0.5).add(0.5).mul(255).clamp(0, 255).to(torch::kByte);
+        _img_tensor = _img_tensor.mul(_stdev).add(_mean).mul(255).clamp(0, 255).to(torch::kByte);
         _img_tensor = _img_tensor.contiguous();
 
-        int height = _img_tensor.size(0);
-        int width = _img_tensor.size(1);
+        int height = _img_tensor.size(1);
+        int width = _img_tensor.size(0);
         cv::Mat output(cv::Size(width, height), CV_8UC1);
         std::memcpy((void *)output.data, _img_tensor.data_ptr(), sizeof(torch::kU8) * _img_tensor.numel());
 
@@ -136,8 +136,10 @@ namespace carvana_dataset
         const auto folder = _train ? _root + "/train" : _root + "/val";
         auto targets = torch::empty({num_samples, kRows, kCols}, torch::kFloat);
         auto images = torch::empty({num_samples, 3, kRows, kCols}, torch::kFloat);
-        std::string img_folder = folder + "/images";
-        std::string mask_folder = folder + "/masks";
+        // std::string img_folder = folder + "/images";
+        std::string img_folder = folder + "_images";
+        // std::string mask_folder = folder + "/masks";
+        std::string mask_folder = folder + "_masks";
         std::vector<std::string> folders = {img_folder, mask_folder};
         std::vector<std::string> mask_filenames;
 

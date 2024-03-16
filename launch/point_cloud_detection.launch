@@ -1,0 +1,3 @@
+<launch>
+    <node pkg="pytorch_tutorial" type="point_cloud_detection_node" name="point_cloud_detection_node" output="screen" />
+</launch>
