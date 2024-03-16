@@ -73,7 +73,7 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> PointNetBackboneImpl::fo
     }
 
     /*Spatial Transform(64x64)*/
-    std::get<2>(backbone_feature) = spatial_transformers_->at<torch::nn::Module>(1).as<TNet>()->forward(_x).to(_x.device());
+    std::get<2>(backbone_feature) = spatial_transformers_->at<torch::nn::Module>(1).as<TNet>()->forward(_x);
     _x = torch::bmm(_x.transpose(2, 1), std::get<2>(backbone_feature)).transpose(2, 1);
     auto local_feature = _x.clone().to(_x.device());
 
@@ -90,14 +90,14 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> PointNetBackboneImpl::fo
     /*Get Critical point index and Global feature*/
     auto max_pool_opt = torch::nn::functional::MaxPool1dFuncOptions(num_pts_);
     auto pool_result = torch::nn::functional::max_pool1d_with_indices(_x, max_pool_opt);
-    std::get<1>(backbone_feature) = std::get<1>(pool_result).view({ batch_size, -1 }).to(_x.device());
+    std::get<1>(backbone_feature) = std::get<1>(pool_result).view({ batch_size, -1 });
 
     if (local_feature_) {
         /*Feature:{local,global}*/
-        std::get<0>(backbone_feature) = torch::cat({ local_feature, std::get<0>(pool_result).view({ batch_size, -1 }).unsqueeze_(-1).repeat({ 1, 1, num_pts_ }) }, 1).to(_x.device());
+        std::get<0>(backbone_feature) = torch::cat({ local_feature, std::get<0>(pool_result).view({ batch_size, -1 }).unsqueeze_(-1).repeat({ 1, 1, num_pts_ }) }, 1);
     } else {
         /*Feature:{global}*/
-        std::get<0>(backbone_feature) = std::get<0>(pool_result).view({ batch_size, -1 }).to(_x.device());
+        std::get<0>(backbone_feature) = std::get<0>(pool_result).view({ batch_size, -1 });
     }
 
     return backbone_feature;
@@ -149,16 +149,8 @@ PointNetClassificationImpl::~PointNetClassificationImpl()
 
 std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> PointNetClassificationImpl::forward(torch::Tensor _x)
 {
-    std::cout<<"PointNetClass forward."<<std::endl;
     /*Get backbone features*/
-    std::cout<<"PointNetClass backbone."<<std::endl;
     auto backbone_feature = backbone_->forward(_x);
-    std::cout<<"backbone_feature[0][device]:"<<std::get<0>(backbone_feature).device()<<std::endl;
-    std::cout<<"backbone_feature[0][size]:"<<std::get<0>(backbone_feature).sizes()<<std::endl;
-    std::cout<<"backbone_feature[1][device]:"<<std::get<1>(backbone_feature).device()<<std::endl;
-    std::cout<<"backbone_feature[1][size]:"<<std::get<1>(backbone_feature).sizes()<<std::endl;
-    std::cout<<"backbone_feature[2][device]:"<<std::get<2>(backbone_feature).device()<<std::endl;
-    std::cout<<"backbone_feature[2][size]:"<<std::get<2>(backbone_feature).sizes()<<std::endl;
 
     /*MLP(Classification)*/
     auto it_mlp = mlp_->begin();
@@ -171,7 +163,7 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> PointNetClassificationIm
         it_bn++;
     }
     std::get<0>(backbone_feature) = (*it_mlp)->as<torch::nn::Linear>()->forward(std::get<0>(backbone_feature));
-    std::get<0>(backbone_feature) = (*it_mlp)->as<torch::nn::Dropout>()->forward(std::get<0>(backbone_feature));
+    std::get<0>(backbone_feature) = dropout_->forward(std::get<0>(backbone_feature));
 
     return backbone_feature;
 }
@@ -211,6 +203,7 @@ PointNetSegmentationImpl::PointNetSegmentationImpl(int64_t _num_pts, int64_t _nu
     batch_norm_->push_back(torch::nn::BatchNorm1d(torch::nn::BatchNorm1dOptions(512)));
     batch_norm_->push_back(torch::nn::BatchNorm1d(torch::nn::BatchNorm1dOptions(256)));
     batch_norm_->push_back(torch::nn::BatchNorm1d(torch::nn::BatchNorm1dOptions(128)));
+    register_module("batch_norm", batch_norm_);
 }
 
 PointNetSegmentationImpl::~PointNetSegmentationImpl()
