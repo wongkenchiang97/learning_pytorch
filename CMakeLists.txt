@@ -7,6 +7,7 @@ set(CMAKE_CXX_FLAGS ${CMAKE_CXX_FLAGS} ${TORCH_CXX_FLAGS})
 set(-D DOWNLOAD_DATASETS "ON")
 list(APPEND CMAKE_PREFIX_PATH "~/libtorch")
 set(CMAKE_CUDA_COMPILER "/usr/local/cuda-12.3/bin/nvcc")
+SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -pthread")
 
 ## Find catkin macros and libraries
 ## if COMPONENTS list like find_package(catkin REQUIRED COMPONENTS xyz)
@@ -16,6 +17,7 @@ find_package(catkin REQUIRED COMPONENTS
   rospy
   std_msgs
   roslib
+  pcl_ros
 )
 
 find_package(Torch REQUIRED)

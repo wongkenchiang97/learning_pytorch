@@ -1,3 +1,6 @@
 <launch>
     <node pkg="pytorch_tutorial" type="point_cloud_detection_node" name="point_cloud_detection_node" output="screen" />
+
+    <node pkg="rviz" type="rviz" name="visualizer" args="-d $(find pytorch_tutorial)/config/point_cloud_detection.rviz"/>
+
 </launch>
