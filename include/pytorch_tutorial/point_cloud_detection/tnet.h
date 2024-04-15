@@ -69,7 +69,7 @@ torch::Tensor TNetImpl::forward(torch::Tensor _x)
 
     /*MLP(Linear) Layers*/
     auto it_linear = linear_->begin();
-    while (it_linear != linear_->end()-1) {
+    while (it_linear != linear_->end() - 1) {
         _x = (*it_linear)->as<torch::nn::Linear>()->forward(_x); // linear
         _x = torch::relu(_x); // relu
         _x = (*it_bn)->as<torch::nn::BatchNorm1d>()->forward(_x); // batch norm

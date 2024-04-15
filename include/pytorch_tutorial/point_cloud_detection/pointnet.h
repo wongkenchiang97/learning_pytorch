@@ -140,7 +140,7 @@ PointNetClassificationImpl::PointNetClassificationImpl(int64_t _num_pts, int64_t
     register_module("batch_norm", batch_norm_);
 
     /*Dropout*/
-    dropout_ = torch::nn::Dropout(torch::nn::DropoutOptions(0.3));
+    dropout_ = torch::nn::Dropout(torch::nn::DropoutOptions(0.6));
 }
 
 PointNetClassificationImpl::~PointNetClassificationImpl()
