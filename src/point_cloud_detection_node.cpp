@@ -1,7 +1,5 @@
 #define PCL_NO_PRECOMPILE
 #include <Eigen/Eigen>
-#include <opencv2/core.hpp>
-#include <opencv2/opencv.hpp>
 #include <pcl/common/colors.h>
 #include <pcl/filters/conditional_removal.h>
 #include <pcl/filters/crop_box.h>
@@ -14,6 +12,7 @@
 #include <pcl_conversions/pcl_conversions.h>
 #include <pytorch_tutorial/point_cloud_detection/point_type.h>
 #include <pytorch_tutorial/point_cloud_detection/pointnet.h>
+// #include <pytorch_tutorial/point_cloud_detection/warehouse_dataset.h>
 #include <ros/package.h>
 #include <ros/ros.h>
 #include <sensor_msgs/PointCloud2.h>
@@ -89,11 +88,11 @@ torch::Tensor pointCloudToTensor(typename pcl::PointCloud<PointT>::ConstPtr _in)
     Eigen::MatrixXf xyz = pts_map;
     Eigen::Vector3f min = xyz.rowwise().minCoeff();
     Eigen::Vector3f max = xyz.rowwise().maxCoeff();
-    xyz.row(0).array() = (xyz.row(0).array()-min(0))/(max(0)-min(0));
-    xyz.row(1).array() = (xyz.row(1).array()-min(1))/(max(1)-min(1));
-    xyz.row(2).array() = (xyz.row(2).array()-min(2))/(max(2)-min(2));
+    xyz.row(0).array() = (xyz.row(0).array() - min(0)) / (max(0) - min(0));
+    xyz.row(1).array() = (xyz.row(1).array() - min(1)) / (max(1) - min(1));
+    xyz.row(2).array() = (xyz.row(2).array() - min(2)) / (max(2) - min(2));
     torch::Tensor tensor_data = torch::from_blob(xyz.data(), { 3, xyz.cols() }, torch::TensorOptions().dtype(torch::kFloat)).clone();
-    tensor_data = tensor_data.view({ xyz.cols(), 3 }).transpose(1, 0);
+    tensor_data = tensor_data.view({ xyz.cols(), 3 });
     return tensor_data;
 }
 
@@ -106,6 +105,7 @@ int main(int argc, char** argv)
 {
     ros::init(argc, argv, "point_cloud_detection");
     ros::NodeHandle nh;
+    ros::NodeHandle pnh("~");
     ros::Publisher data_cloud_pub, partitioned_cloud_pub, target_cloud_pub, sampled_cloud_pub, inference_cloud_pub;
     data_cloud_pub = nh.advertise<sensor_msgs::PointCloud2>("data_cloud", 1, true);
     partitioned_cloud_pub = nh.advertise<sensor_msgs::PointCloud2>("partitioned_cloud", 1, true);
@@ -117,15 +117,23 @@ int main(int argc, char** argv)
     spinner.start();
     auto device = (torch::cuda::is_available() ? torch::kCUDA : torch::kCPU);
     const int batch_size = 2;
-    const int max_num_pts = 300;
+    const int max_num_pts = 500;
     auto learning_rate = 1e-5;
-    const int64_t num_epochs = 5000;
-    // const int64_t num_epochs = 1;
-    const bool train = true;
+    // const int64_t num_epochs = 2000;
+    const int64_t num_epochs = 1;
+    bool train, resample;
+    pnh.getParam("train", train);
+    pnh.getParam("resample", resample);
+    std::cout << "train: " << (train ? "true." : "false.") << std::endl;
+    auto has_label = pcl::traits::has_field<pcl_ext::PointXYZLO, pcl::fields::label>::value;
+    auto has_object = pcl::traits::has_field<pcl_ext::PointXYZLO, pcl::fields::object>::value;
+    std::cout << "has_label: " << (has_label ? "true." : "false.") << std::endl;
+    std::cout << "has_object: " << (has_object ? "true." : "false.") << std::endl;
     // ModelTask task = ModelTask::CLASSIFICATION;
     ModelTask task = ModelTask::SEGMENTATION;
-    // auto read_model_path = ros::package::getPath("pytorch_tutorial") + "/data/model/pointnet/pallet_noise_segmentation/overfit_test_model.pth";
-    auto read_model_path = ros::package::getPath("pytorch_tutorial") + "/data/model/pointnet/pallet_noise_segmentation/pallet_pocket_model.pth";
+    // auto read_model_path = ros::package::getPath("pytorch_tutorial") + "/data/model/pointnet/pallet_noise_segmentation/model_0d5_500.pth";
+    auto read_model_path = ros::package::getPath("pytorch_tutorial") + "/data/model/pointnet/pallet_noise_segmentation/rack_model.pth";
+    // auto read_model_path = ros::package::getPath("pytorch_tutorial") + "/data/model/pointnet/pallet_noise_segmentation/pallet_pocket_model.pth";
     // auto read_model_path = ros::package::getPath("pytorch_tutorial") + "/data/model/pointnet/pallet_noise_segmentation/overfit_classification_model.pth";
     auto save_model_path = ros::package::getPath("pytorch_tutorial") + "/data/model/pointnet/pallet_noise_segmentation/test_model.pth";
     std::cout << "device: " << (torch::cuda::is_available() ? "true." : "false.") << std::endl;
@@ -143,45 +151,109 @@ int main(int argc, char** argv)
     }
 
     /*Test data*/
-    std::string pcd = "/home/dylan/Documents/datasets/pallet3d/usun_europallet/train/target/0.pcd";
+    std::string pcd;
+    pnh.getParam("pcd", pcd);
+    if (pcd.empty())
+        pcd = "/home/dylan/Documents/datasets/pallet3d/usun_europallet/train/target/0.pcd";
+    // std::string pcd = "/home/dylan/Documents/datasets/pallet3d/usun_europallet/train/target/0.pcd";
     // std::string pcd = "/home/dylan/Documents/datasets/obstacle_detection/scene_cloud_18-03-20241858299.pcd";
     pcl::PointCloud<pcl_ext::PointXYZLO>::Ptr data_cloud, target_cloud, sampled_cloud;
     data_cloud = pcl::make_shared<pcl::PointCloud<pcl_ext::PointXYZLO>>();
     target_cloud = pcl::make_shared<pcl::PointCloud<pcl_ext::PointXYZLO>>();
     sampled_cloud = pcl::make_shared<pcl::PointCloud<pcl_ext::PointXYZLO>>();
-    pcl::io::loadPCDFile(pcd, *data_cloud);
+    if (!train && !resample) {
+        auto dir = "/home/dylan/nn_ws/src/learning_pytorch/data/saved_pcd/partitioned_cloud.pcd";
+        std::cout << "no_resample_dir: " << dir << std::endl;
+        auto sucess = pcl::io::loadPCDFile(dir, *data_cloud);
+        if (!sucess)
+            std::runtime_error("failed to read point cloud.");
+    } else {
+        pcl::io::loadPCDFile(pcd, *data_cloud);
+    }
 
     /*Voxelize Scene cloud*/
     // std::vector<int> labels = { 1, 2 }; // get pallet & noise cloud
-    std::vector<int> labels = { 1 }; // get pallet cloud
+    std::vector<int> labels = { 4 }; // get pallet cloud
     // std::vector<int> labels = { 2, 4 };
     getPointCloudFromLabel<pcl_ext::PointXYZLO>(data_cloud, labels, *target_cloud);
     auto filtered_cloud = pcl::make_shared<pcl::PointCloud<pcl_ext::PointXYZLO>>();
-    Eigen::Vector3f voxel_size = { 0.2, 0.2, 0.2 };
+    Eigen::Vector3f voxel_size = { 0.5, 0.5, 0.5 };
     pcl::VoxelGrid<pcl_ext::PointXYZLO> vg;
-    vg.setInputCloud(data_cloud);
+    // vg.setInputCloud(data_cloud);
+    vg.setInputCloud(target_cloud);
     vg.setMinimumPointsNumberPerVoxel(max_num_pts);
     vg.setLeafSize(voxel_size.homogeneous());
     vg.filter(*filtered_cloud);
     pcl::CropBox<pcl_ext::PointXYZLO> crop(true);
     crop.setKeepOrganized(false);
     crop.setInputCloud(data_cloud);
-    std::cout << "filtered_cloud[size]: " << filtered_cloud->size() << std::endl;
     auto it_voxel_pt = filtered_cloud->points.cbegin();
     auto partitioned_cloud = pcl::make_shared<pcl::PointCloud<pcl_ext::PointXYZLO>>();
     auto tensor_data = torch::Tensor();
     auto tensor_target1 = torch::Tensor();
     auto target_label_obj_map = Eigen::Map<Eigen::MatrixXi, 0, Eigen::Stride<sizeof(pcl_ext::PointXYZLO) / sizeof(int), 1>>(&data_cloud->points[0].label, 2, data_cloud->points.size());
-    auto num_label = target_label_obj_map.row(0).maxCoeff()+1;
-    while (it_voxel_pt != filtered_cloud->points.cend()) {
-        /*Sample point cloud in voxel*/
-        auto partition_cloud = pcl::make_shared<pcl::PointCloud<pcl_ext::PointXYZLO>>();
-        crop.setMin((it_voxel_pt->getVector3fMap() - 0.5 * voxel_size).homogeneous());
-        crop.setMax((it_voxel_pt->getVector3fMap() + 0.5 * voxel_size).homogeneous());
-        crop.filter(*partition_cloud);
-        if(partition_cloud->size()>=max_num_pts)
-        {
-            getRandomSample<pcl_ext::PointXYZLO>(partition_cloud, max_num_pts, *partition_cloud);
+    auto num_label = target_label_obj_map.row(0).maxCoeff() + 1;
+    if (train || resample) {
+        while (it_voxel_pt != filtered_cloud->points.cend()) {
+            /*Sample point cloud in voxel*/
+            auto partition_cloud = pcl::make_shared<pcl::PointCloud<pcl_ext::PointXYZLO>>();
+            crop.setMin((it_voxel_pt->getVector3fMap() - 0.5 * voxel_size).homogeneous());
+            crop.setMax((it_voxel_pt->getVector3fMap() + 0.5 * voxel_size).homogeneous());
+            crop.filter(*partition_cloud);
+            if (partition_cloud->size() >= max_num_pts) {
+                getRandomSample<pcl_ext::PointXYZLO>(partition_cloud, max_num_pts, *partition_cloud);
+                // std::cout << "partition_cloud[" << std::distance(filtered_cloud->points.cbegin(), it_voxel_pt) << "][size]: " << partition_cloud->size() << std::endl;
+                auto label_obj_map = Eigen::Map<Eigen::MatrixXi, 0, Eigen::Stride<sizeof(pcl_ext::PointXYZLO) / sizeof(int), 1>>(&partition_cloud->points[0].label, 2, partition_cloud->points.size());
+                label_obj_map.row(1).array() = std::distance(filtered_cloud->points.cbegin(), it_voxel_pt);
+                auto pts_map = Eigen::Map<Eigen::MatrixXf, 0, Eigen::Stride<sizeof(pcl_ext::PointXYZLO) / sizeof(float), 1>>(&partition_cloud->points[0].x, 3, partition_cloud->points.size());
+                /*Set train data*/
+                if (!tensor_data.defined()) {
+                    tensor_data = pointCloudToTensor<pcl_ext::PointXYZLO>(partition_cloud);
+                    tensor_data = tensor_data.to(device).unsqueeze(0).requires_grad_(true);
+                } else {
+                    tensor_data = torch::cat({ tensor_data, pointCloudToTensor<pcl_ext::PointXYZLO>(partition_cloud).unsqueeze_(0).to(device) }, 0);
+                }
+
+                /*Set train target*/
+                if (!tensor_target1.defined()) {
+                    Eigen::VectorXi label = label_obj_map.row(0);
+                    torch::Tensor tensor_label = torch::from_blob(label.data(), label.rows(), torch::TensorOptions().dtype(torch::kInt));
+                    tensor_label = tensor_label.to(device).to(torch::kLong);
+                    auto range = torch::arange(label.rows(), torch::TensorOptions().dtype(torch::kLong));
+                    tensor_target1 = torch::from_blob(label.data(), label.rows(), torch::TensorOptions().dtype(torch::kInt));
+                    tensor_target1 = tensor_target1.to(device).to(torch::kLong);
+                    tensor_target1.unsqueeze_(0);
+                } else {
+                    Eigen::VectorXi label = label_obj_map.row(0);
+                    torch::Tensor tensor_label = torch::from_blob(label.data(), label.rows(), torch::TensorOptions().dtype(torch::kInt));
+                    tensor_label = tensor_label.to(device).to(torch::kLong).unsqueeze(0);
+                    auto range = torch::arange(label.rows(), torch::TensorOptions().dtype(torch::kLong));
+                    tensor_target1 = torch::cat({ tensor_target1, tensor_label }, 0);
+                }
+                partitioned_cloud->operator+=(*partition_cloud);
+            }
+            it_voxel_pt++;
+        }
+    } else {
+        auto num_voxels = target_label_obj_map.row(1).maxCoeff() + 1;
+        std::cout << "num of object: " << num_voxels << std::endl;
+        /*Set condition*/
+        // typename pcl::ConditionOr<pcl_ext::PointXYZLO>::Ptr obj_cond;
+        // obj_cond = pcl::make_shared<pcl::ConditionOr<pcl_ext::PointXYZLO>>();
+
+        /*Set condition filter*/
+        typename pcl::ConditionalRemoval<pcl_ext::PointXYZLO> obj_filt(true);
+        obj_filt.setInputCloud(data_cloud);
+        obj_filt.setKeepOrganized(false);
+        for (int i = 0; i < num_voxels; i++) {
+            auto partition_cloud = pcl::make_shared<pcl::PointCloud<pcl_ext::PointXYZLO>>();
+            typename pcl::ConditionOr<pcl_ext::PointXYZLO>::Ptr obj_cond;
+            obj_cond = pcl::make_shared<pcl::ConditionOr<pcl_ext::PointXYZLO>>();
+            obj_cond->addComparison(typename pcl::FieldComparison<pcl_ext::PointXYZLO>::Ptr(new pcl::FieldComparison<pcl_ext::PointXYZLO>("object", pcl::ComparisonOps::EQ, i)));
+            obj_filt.setCondition(obj_cond);
+            obj_filt.filter(*partition_cloud);
+            std::cout << "partition_cloud[" << i << "][size]: " << partition_cloud->size() << std::endl;
+
             auto label_obj_map = Eigen::Map<Eigen::MatrixXi, 0, Eigen::Stride<sizeof(pcl_ext::PointXYZLO) / sizeof(int), 1>>(&partition_cloud->points[0].label, 2, partition_cloud->points.size());
             label_obj_map.row(1).array() = std::distance(filtered_cloud->points.cbegin(), it_voxel_pt);
             auto pts_map = Eigen::Map<Eigen::MatrixXf, 0, Eigen::Stride<sizeof(pcl_ext::PointXYZLO) / sizeof(float), 1>>(&partition_cloud->points[0].x, 3, partition_cloud->points.size());
@@ -192,39 +264,48 @@ int main(int argc, char** argv)
             } else {
                 tensor_data = torch::cat({ tensor_data, pointCloudToTensor<pcl_ext::PointXYZLO>(partition_cloud).unsqueeze_(0).to(device) }, 0);
             }
-            
+
             /*Set train target*/
             if (!tensor_target1.defined()) {
                 Eigen::VectorXi label = label_obj_map.row(0);
-                torch::Tensor tensor_label = torch::from_blob(label.data(),  label.rows() , torch::TensorOptions().dtype(torch::kInt));
+                torch::Tensor tensor_label = torch::from_blob(label.data(), label.rows(), torch::TensorOptions().dtype(torch::kInt));
                 tensor_label = tensor_label.to(device).to(torch::kLong);
                 auto range = torch::arange(label.rows(), torch::TensorOptions().dtype(torch::kLong));
-                tensor_target1 = torch::from_blob(label.data(),  label.rows() , torch::TensorOptions().dtype(torch::kInt));
+                tensor_target1 = torch::from_blob(label.data(), label.rows(), torch::TensorOptions().dtype(torch::kInt));
                 tensor_target1 = tensor_target1.to(device).to(torch::kLong);
                 tensor_target1.unsqueeze_(0);
             } else {
                 Eigen::VectorXi label = label_obj_map.row(0);
-                torch::Tensor tensor_label = torch::from_blob(label.data(),  label.rows() , torch::TensorOptions().dtype(torch::kInt));
+                torch::Tensor tensor_label = torch::from_blob(label.data(), label.rows(), torch::TensorOptions().dtype(torch::kInt));
                 tensor_label = tensor_label.to(device).to(torch::kLong).unsqueeze(0);
                 auto range = torch::arange(label.rows(), torch::TensorOptions().dtype(torch::kLong));
                 tensor_target1 = torch::cat({ tensor_target1, tensor_label }, 0);
             }
+
             partitioned_cloud->operator+=(*partition_cloud);
         }
-        it_voxel_pt++;
     }
+    std::cout << "setup tensor complete." << std::endl;
+    std::cout << "tensor_data[size]: " << tensor_data.sizes() << std::endl;
+    std::cout << "tensor_target1[size]: " << tensor_target1.sizes() << std::endl;
     auto sample_label_obj_map = Eigen::Map<Eigen::MatrixXi, 0, Eigen::Stride<sizeof(pcl_ext::PointXYZLO) / sizeof(int), 1>>(&partitioned_cloud->points[0].label, 2, partitioned_cloud->points.size());
     auto measurement_stamp = ros::Time::now();
     publishPointCloud<pcl_ext::PointXYZLO>("partitioned_cloud", *partitioned_cloud, partitioned_cloud_pub, measurement_stamp, "camera");
     publishPointCloud<pcl_ext::PointXYZLO>("data_cloud", *data_cloud, data_cloud_pub, measurement_stamp, "camera");
     publishPointCloud<pcl_ext::PointXYZLO>("target_cloud", *target_cloud, target_cloud_pub, measurement_stamp, "camera");
- 
+    if (train && !resample) {
+        auto dir = "/home/dylan/nn_ws/src/learning_pytorch/data/saved_pcd/partitioned_cloud.pcd";
+        std::cout << "dir: " << dir << std::endl;
+        pcl::io::savePCDFileASCII(dir, *partitioned_cloud);
+        auto obj_map = Eigen::Map<Eigen::MatrixXi, 0, Eigen::Stride<sizeof(pcl_ext::PointXYZLO) / sizeof(int), 1>>(&partitioned_cloud->points[0].object, 1, partitioned_cloud->points.size());
+        std::cout << "num of object[save]: " << obj_map.maxCoeff() + 1 << std::endl;
+    }
 
     /*Model*/
     // const int num_global_feature = 1024;
     const int num_global_feature = 4096;
-    auto classification_net = PointNetClassification(max_num_pts, num_global_feature, num_label);
-    auto segmentation_net = PointNetSegmentation(max_num_pts, num_global_feature, num_label);
+    auto classification_net = pointnet::PointNetClassification(max_num_pts, num_global_feature, num_label);
+    auto segmentation_net = pointnet::PointNetSegmentation(max_num_pts, num_global_feature, num_label);
     switch (task) {
     case ModelTask::CLASSIFICATION: {
         classification_net->to(device);
@@ -243,10 +324,13 @@ int main(int argc, char** argv)
     // torch::optim::Adam optimizer(classification_net->parameters(), torch::optim::AdamOptions(learning_rate));
 
     /*Loss*/
-    auto weights = torch::zeros({ 3 }, torch::TensorOptions().device(device));
-    weights.index_put_({ 0 }, 10.01);
+    auto weights = torch::zeros({ num_label }, torch::TensorOptions().device(device));
+    weights.index_put_({ 0 }, 1.0);
     weights.index_put_({ 1 }, 80.0);
     weights.index_put_({ 2 }, 1.0);
+    weights.index_put_({ 3 }, 10.0);
+    weights.index_put_({ 4 }, 50.0);
+    // weights.index_put_({ 5 }, 20.0);
     auto ign_idx = torch::zeros({ 1 });
     // std::cout << "weights: " << weights << std::endl;
     // std::cout << "ign_idx: " << ign_idx << std::endl;
@@ -258,13 +342,16 @@ int main(int argc, char** argv)
     if (train) {
         auto identity = torch::eye(64, torch::TensorOptions().device(device)).repeat({ batch_size, 1, 1 });
         ROS_INFO("training...");
+        double loss = 5.0;
+        double terminate_loss = 0.02;
+        // while (loss > terminate_loss) {
         for (int epoch = 0; epoch < num_epochs; epoch++) {
             std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> out;
             torch::Tensor loss_feature;
             switch (task) {
             case ModelTask::CLASSIFICATION: {
                 /*Forward*/
-                out = classification_net->forward(tensor_data);
+                out = classification_net->forward(tensor_data.transpose(-2, -1));
 
                 /*loss Criteria*/
                 // loss_feature = criterion(std::get<0>(out).transpose(1, 0), label_one_hot.transpose(1, 0));
@@ -274,7 +361,8 @@ int main(int argc, char** argv)
 
             case ModelTask::SEGMENTATION: {
                 /*Forward*/
-                out = segmentation_net->forward(tensor_data);
+                out = segmentation_net->forward(tensor_data.transpose(-2, -1));
+                std::cout << "out[0][size]: " << std::get<0>(out).sizes() << std::endl;
 
                 /*loss Criteria*/
                 // auto loss_feature = criterion(std::get<0>(seg_out).transpose(2, 1), tensor_target);
@@ -287,6 +375,7 @@ int main(int argc, char** argv)
             }
 
             ROS_INFO("loss: %f", loss_feature.item<double>());
+            loss = loss_feature.item<double>();
 
             /*Backward and optimize*/
             optimizer.zero_grad();
@@ -320,8 +409,8 @@ int main(int argc, char** argv)
     }
 
     /*load model*/
-    // auto infer_model = PointNetClassification(max_num_pts, num_global_feature, num_label);
-    auto infer_model = PointNetSegmentation(max_num_pts, num_global_feature, num_label);
+    // auto infer_model = pointnet::PointNetClassification(max_num_pts, num_global_feature, num_label);
+    auto infer_model = pointnet::PointNetSegmentation(max_num_pts, num_global_feature, num_label);
     if (train) {
         ROS_INFO("loading model from %s.", save_model_path.c_str());
         torch::load(infer_model, save_model_path);
@@ -355,10 +444,10 @@ int main(int argc, char** argv)
     case ModelTask::SEGMENTATION: {
         ROS_INFO("SEGMENTATION inference");
         obj_map.row(0) = Eigen::VectorXi::Zero(obj_map.cols()).transpose();
-        std::cout<<"tensor_data[size]: "<<tensor_data.sizes()<<std::endl;
-        auto result = infer_model->forward(tensor_data);
+        std::cout << "tensor_data[size]: " << tensor_data.sizes() << std::endl;
+        auto result = infer_model->forward(tensor_data.transpose(-2, -1));
         std::cout << "result[size]: " << std::get<0>(result).sizes() << std::endl;
-        auto prob = torch::argmax(std::get<0>(result).transpose(2, 1).softmax(1),1).to(torch::kCPU).to(torch::kInt).view({1,-1});
+        auto prob = torch::argmax(std::get<0>(result).transpose(2, 1).softmax(1), 1).to(torch::kCPU).to(torch::kInt).view({ 1, -1 });
         auto prob_map = Eigen::Map<Eigen::MatrixXi>(prob.data_ptr<int>(), 1, prob.size(-1));
         obj_map.row(0) = prob_map;
         publishPointCloud<pcl_ext::PointXYZLO>("inference_cloud", inference_cloud, inference_cloud_pub, measurement_stamp, "camera");
@@ -367,6 +456,26 @@ int main(int argc, char** argv)
     default:
         break;
     }
+
+    using namespace torch::indexing;
+    // torch::Tensor rand = torch::arange({ 2 * 80 * 3 }, torch::TensorOptions().device(device).dtype(torch::kFloat)).reshape({ 2, 80, 3 });
+    // torch::Tensor rand = torch::arange({ 2 * 10 * 3 }, torch::TensorOptions().device(device).dtype(torch::kFloat)).reshape({ 2, 10, 3 });
+    torch::Tensor rand = torch::rand({ 2, 200000, 3 }, torch::TensorOptions().device(device).dtype(torch::kFloat));
+    std::cout << "rand[size]: " << rand.sizes() << std::endl;
+    // std::cout << "rand:\n"
+    // << rand << std::endl;
+
+    // torch::Tensor groups_param = torch::tensor({ 5.0f, 30.0f, 5.0f, 10.0f });
+    // torch::Tensor groups_param = torch::tensor({ 8.0f, 30.0f, 5.0f, 5.0f, 5.0f, 30.0f, 5.0f, 10.0f });
+    torch::Tensor groups_param = torch::tensor({ 1000.0f, 0.5f, 500.0f, 64.0f, 500.0f, 1.0f, 50.0f, 128.0f, 50.0f, 5.0f, 3.0f, 1024.0f });
+    groups_param = groups_param.view({ -1, 4 });
+    std::cout << "groups_param[size]: " << groups_param.sizes() << std::endl;
+    std::cout << "groups_param:\n"
+              << groups_param << std::endl;
+    auto pointnet2seg = pointnet::PointNet2Segmentation(3, groups_param, 12);
+    pointnet2seg->to(device);
+    auto res = pointnet2seg->forward(rand);
+    std::cout << "res[size]: " << res.sizes() << std::endl;
 
     ros::waitForShutdown();
 
